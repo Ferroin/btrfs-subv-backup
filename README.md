@@ -12,14 +12,18 @@ LICENSE file or the docstring for more information.
 ### Usage
 Usage is extremely simple.  To generate a backup of a given mount
 point, run:
+
 `btrfs-subv-backup.py /path`
+
 This will create a file called `.btrfs-subv-backup.json` in the root of
 the mount point, make sure that gets included in any backups you run of
 the mount point.
 
 To restore the subvolumes in a filesystem after you've extracted a backup
 of the mount point, run:
+
 `btrfs-subv-backup.py --restore /path`
+
 This will recreate the subvolume structure.
 
 If you need to manually recreate the subvolumes, you can find a list
