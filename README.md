@@ -29,6 +29,8 @@ empty directory with the JSON file in it's root (in which case it will
 also create intermediary directories), or on an already eisting directory
 tree, in which case it will copy the existing data into the subvolumes.
 
+If you want some progress messages, add `--verbose` to the command line.
+
 If you need to manually recreate the subvolumes, you can find a list
 of them in the aforementioned JSON file under the 'subvolumes' key (the
 other keys store info about the filesystem itself to make it easier to
@@ -40,7 +42,6 @@ that snapshot relationships __ARE NOT__ saved.  There is currently no
 way to store this data reliably short of a block-level backup, which
 has it's own special issues.
 * Subvolumes with spaces in their name are not supported.
-* There is currently no indication of progress.
 * The restoration process may take a long time and may use a very large
 amount of disk space when restoring subvolumes after having already
 restored regular data.  Ideally this should be fixed to use reflinks to

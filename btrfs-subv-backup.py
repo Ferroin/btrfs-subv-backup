@@ -91,7 +91,7 @@ def _ismount(path):
                     return True
     return False
 
-def get_fs_info(path):
+def get_fs_info(path, verbose=False):
     '''Retrieve the filesystem info for the given mountpoint.
 
        This parses through /proc/mounts, matching on the path given,
@@ -115,6 +115,8 @@ def get_fs_info(path):
         'subvolid': None
     }
     mntent = False
+    if verbose:
+        print('Fetching filesystem information for ' + path)
     with open('/proc/mounts', 'r') as mounts:
         for line in mounts:
             entry = line.split()
@@ -136,7 +138,7 @@ def get_fs_info(path):
     ret['label'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'LABEL', ret['device']]).decode().rstrip()
     return ret
 
-def get_subvol_list(fsinfo):
+def get_subvol_list(fsinfo, verbose=False):
     '''Parse the subvolume tree in the mountpoint given by fsinfo.
 
       This returns fsinfo, with the subvolume tree added to it under the
@@ -147,6 +149,8 @@ def get_subvol_list(fsinfo):
       This is horribly slow, and could be made much more efficient.'''
     ret = fsinfo
     ret['subvolumes'] = list()
+    if verbose:
+        print('Generating subvolume list for ' + fsinfo['path'])
     for root, dirs, files in os.walk(fsinfo['path']):
         exclude = list()
         for item in dirs:
@@ -155,6 +159,8 @@ def get_subvol_list(fsinfo):
                 exclude.append(item)
                 continue
             elif os.stat(fullpath, follow_symlinks=False).st_ino == 256:
+                if verbose:
+                    print('Found subvolume at ' + os.path.join(root[len(fsinfo['path']):].lstrip('/'), item))
                 ret['subvolumes'].append(os.path.join(root[len(fsinfo['path']):].lstrip('/'), item))
         dirs[:] = [d for d in dirs if d not in exclude]
     ret['subvolumes'].sort()
@@ -220,7 +226,7 @@ def convert_dir_to_subv(dest):
             pass
     return True
 
-def restore_subvol(path, subvol):
+def restore_subvol(path, subvol, verbose=False):
     '''Restore a subvolume under path.
 
        If the path exists, it is converted to a subvolume using
@@ -229,8 +235,11 @@ def restore_subvol(path, subvol):
     destpath = os.path.abspath(os.path.join(path, subvol))
     os.makedirs(os.path.split(destpath)[0], exist_ok=True)
     if os.path.isdir(destpath):
+        print('Converting directory to subvolume at ' + os.path.join(path, subvol))
         convert_dir_to_subv(destpath)
     elif not os.path.exists(destpath):
+        if verbose:
+            print('Creating subvolume at ' + os.path.join(path, subvol))
         try:
             subprocess.check_output(['btrfs', 'subvolume', 'create', destpath])
         except subprocess.CalledProcessError:
@@ -247,6 +256,8 @@ def parse_args():
     parser.add_argument('--restore', '-r', action='store_const', dest='mode', const='restore', default='save',
                         help='Restore the state of the given mount point.')
     parser.add_argument('path', help='The path to the mount point to operate on.')
+    parser.add_argument('--verbose', '-v', action='store_const', dest='verbose', const=True, default=False,
+                        help='Print out status messages as things happen.')
     args = parser.parse_args()
     return args
 
@@ -254,17 +265,20 @@ def main():
     '''Main program logic.'''
     args = parse_args()
     if args.mode == 'save':
-        fsinfo = get_fs_info(args.path)
-        fsinfo = get_subvol_list(fsinfo)
+        fsinfo = get_fs_info(args.path, verbose=args.verbose)
+        fsinfo = get_subvol_list(fsinfo, verbose=args.verbose)
+        if args.verbose:
+            print('Writing subvolume information')
         with open(os.path.join(args.path, '.btrfs-subv-backup.json'), 'w+') as jfile:
             return json.dump(fsinfo, jfile, sort_keys=True, indent=4)
     elif args.mode == 'restore':
-        fsinfo = get_fs_info(args.path)
+        fsinfo = get_fs_info(args.path, verbose=args.verbose)
+        print('Loading subvolume information')
         with open(os.path.join(args.path, '.btrfs-subv-backup.json'), 'r') as jfile:
             state = json.load(jfile)
         state['subvolumes'].sort()
         for item in state['subvolumes']:
-            restore_subvol(args.path, item)
+            restore_subvol(args.path, item, verbose=args.verbose)
     else:
         raise Exception('Unhandled operating mode: ' + args.mode)
 
