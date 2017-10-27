@@ -54,26 +54,34 @@ import shutil
 import subprocess
 import sys
 
-_VERSION = '0.1b'
+try:
+    import reflink
+except ImportError:
+    pass
+
+_VERSION = '0.2b'
 _DESCRIPTION = '''
-btrfs-subv-backup is a tool for backing up the BTRFS subvolume layout below a given mount point.
+btrfs-subv-backup is a tool for backing up the BTRFS subvolume layout
+below a given mount point.
 
-It creates a file called .btrfs-subv-backup.json under the given mount point, which
-contains enough data to recreate the subvolume layout, as well as some
-secondary info to help humans looking at it figure out what filesystem
-it was generated from.
+It creates a file called .btrfs-subv-backup.json under the given mount
+point, which contains enough data to recreate the subvolume layout,
+as well as some secondary info to help humans looking at it figure out
+what filesystem it was generated from.
 
-btrfs-subv-backup explicitly DOES NOT store information about snapshot relationshipts
-or reflinks.  It will not restore the nature of snapshots.  It also
-will not cross mount boundaries, which may somewhat complicate things
-for people using certain distributions that explicitly mount all the
-subvolumes of the root volume.
+btrfs-subv-backup explicitly DOES NOT store information about snapshot
+relationshipts or reflinks.  It will not restore the nature of snapshots.
+It also will not cross mount boundaries, which may somewhat complicate
+things for people using certain distributions that explicitly mount all
+the subvolumes of the root volume.
 
-btrfs-subv-backup is also capable of restoring the state it saves.  To do so,
-make sure the .btrfs-subv-backup.json file is in the root of the mount point,
-and then call btrfs-subv-backup on the mount point with the '--restore' option.
-This will recreate the subvolumes in-place, and may disrupt timestamps
-when doing so.
+btrfs-subv-backup is also capable of restoring the state it saves.  To do
+so, make sure the .btrfs-subv-backup.json file is in the root of the
+mount point, and then call btrfs-subv-backup on the mount point with the
+'--restore' option.  This will recreate the subvolumes in-place, and may
+disrupt timestamps when doing so.  Restoration can be done with reflinks,
+or via a direct copy.  The reflink method will be used by default if
+the required library is present, otherwise a direct copy will be done.
 '''
 
 def _ismount(path):
@@ -180,7 +188,38 @@ def copy_ownership(src, dest):
     status = os.stat(src, follow_symlinks=True)
     os.chown(dest, status.st_uid, status.st_gid)
 
-def convert_dir_to_subv(dest):
+def copytree(src, dest, method):
+    '''Custom version of shutil.copytree().
+
+      This exists so that we can copy ownership properly, and so we can
+      use reflinks if they're availble.
+
+      'method' should be one of 'reflink', or 'copy'.'''
+    srcpath = os.path.abspath(src)
+    destpath = os.path.abspath(dest)
+    oldcwd = os.getcwd()
+    os.chdir(srcpath)
+    for root, dirs, files in os.walk('.'):
+        for item in dirs:
+            srcdir = os.path.join(srcpath, root, item)
+            destdir = os.path.join(destpath, root, item)
+            os.makedirs(destdir)
+            if os.geteuid() == 0:
+                copy_ownership(srcdir, destdir)
+            shutil.copystat(srcdir, destdir)
+        for item in files:
+            srcfile = os.path.join(srcpath, root, item)
+            destfile = os.path.join(destpath, root, item)
+            if method == 'reflinks':
+                reflink.reflink(srcfile, destfile)
+            else:
+                shutil.copyfile(srcfile, destfile)
+            if os.geteuid() == 0:
+                copy_ownership(srcdir, destdir)
+            shutil.copystat(srcdir, destdir)
+    os.chdir(oldcwd)
+
+def convert_dir_to_subv(dest, method):
     '''Convert a directory to a subvolume, in-place.
 
        This takes one argument, the destination path to convert.  It will
@@ -211,7 +250,7 @@ def convert_dir_to_subv(dest):
     try:
         oldpath = os.path.abspath(os.path.join(path, '.btrfs-subv-backup.old'))
         shutil.copystat(dest, copypath, follow_symlinks=True)
-        shutil.copytree(dest, temppath, symlinks=True)
+        copytree(dest, temppath, method)
         os.rename(dest, oldpath)
         os.rename(temppath, dest)
         shutil.copystat(copypath, dest, follow_symlinks=True)
@@ -226,7 +265,7 @@ def convert_dir_to_subv(dest):
             pass
     return True
 
-def restore_subvol(path, subvol, verbose=False):
+def restore_subvol(path, subvol, method, verbose=False):
     '''Restore a subvolume under path.
 
        If the path exists, it is converted to a subvolume using
@@ -236,7 +275,7 @@ def restore_subvol(path, subvol, verbose=False):
     os.makedirs(os.path.split(destpath)[0], exist_ok=True)
     if os.path.isdir(destpath):
         print('Converting directory to subvolume at ' + os.path.join(path, subvol))
-        convert_dir_to_subv(destpath)
+        convert_dir_to_subv(destpath, method)
     elif not os.path.exists(destpath):
         if verbose:
             print('Creating subvolume at ' + os.path.join(path, subvol))
@@ -258,7 +297,20 @@ def parse_args():
     parser.add_argument('path', help='The path to the mount point to operate on.')
     parser.add_argument('--verbose', '-v', action='store_const', dest='verbose', const=True, default=False,
                         help='Print out status messages as things happen.')
+    parser.add_argument('--method', '-m', nargs='1', dest='method', default='reflink',
+                        help='Select a particular restore method.  Available options are reflink and copy.')
     args = parser.parse_args()
+    if args.mode == 'restore':
+        if args.method == 'reflink':
+            if reflink in dir():
+                print('Using reflink restoration method')
+            else:
+                print('Unable to use reflink restore method due to missing libraries, falling back to copy method')
+                args.method = 'copy'
+        elif args.method == 'copy':
+            print('Using copy restore method')
+        else:
+            raise Exception('Unknown restore method ' + args.method)
     return args
 
 def main():
@@ -278,7 +330,7 @@ def main():
             state = json.load(jfile)
         state['subvolumes'].sort()
         for item in state['subvolumes']:
-            restore_subvol(args.path, item, verbose=args.verbose)
+            restore_subvol(args.path, item, method=args.method, verbose=args.verbose)
     else:
         raise Exception('Unhandled operating mode: ' + args.mode)
 

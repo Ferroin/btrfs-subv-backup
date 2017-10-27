@@ -1,10 +1,17 @@
-# btrfs-subv-backup v0.1b
+# btrfs-subv-backup v0.2b
 btrfs-subv-backup is a tool for recording the layout of subvolumes on
 a mounted BTRFS filesystem in a way that can be stored in a regular
 file-based backup (for example, using tar).  It originated out of
 a lack of such existing tools, and is intended to be as portable as
 reasonably possible.  As a result, it depends on nothing beyond a working
 installation of Python version 3.4 or higher.
+
+There is an optional dependency on the Python 'reflink' module
+(https://pypi.python.org/pypi/reflink).  This will make the process of
+subvolume restoration when deata is present significantly more efficient
+(both in terms of time and disk usage).  If this module is not present,
+btrfs-subv-backup will fall back to a direct copy method of restoration,
+which is not veyr efficient.
 
 btrfs-subv-backup is licensed under a 3-clause BSD license, check the
 LICENSE file or the docstring for more information.
@@ -37,15 +44,11 @@ other keys store info about the filesystem itself to make it easier to
 figure out what it was).
 
 ### Limitations and Known Issues
-* We don't store information about reflinks.  THis means in particular
+* We __DO NOT__ store information about reflinks.  THis means in particular
 that snapshot relationships __ARE NOT__ saved.  There is currently no
 way to store this data reliably short of a block-level backup, which
 has it's own special issues.
 * Subvolumes with spaces in their name are not supported.
-* The restoration process may take a long time and may use a very large
-amount of disk space when restoring subvolumes after having already
-restored regular data.  Ideally this should be fixed to use reflinks to
-improve speed and disk usage.
 * When restoring subvolumes in a pre-existing directory tree, the
 restoration process does not reliably copy POSIX ACL's or security
 extended attributes (such as SELinux context).
