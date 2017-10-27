@@ -46,12 +46,8 @@ amount of disk space when restoring subvolumes after having already
 restored regular data.  Ideally this should be fixed to use reflinks to
 improve speed and disk usage.
 * When restoring subvolumes in a pre-existing directory tree, the
-restoration process does not proprly copy permissions for the subvolumes.
-* The current restoration process is all-or-nothing, things are not
-correctly handled if some of the subvolumes have already been restored
-(although btrfs-subv-backup will clean up the temporary subvolumes it
-createz during the restore if the restore fails).  This should be pretty
-easy to fix, I just haven't gotten around to it yet.
+restoration process does not reliably copy POSIX ACL's or security
+extended attributes (such as SELinux context).
 * btrfs-subv-backup won't cross actual mount points, which means it
 won't recurse into explicitly mounted subvolumes.  This makes usage a
 bit more complicated on some distributions (such as SLES and OpenSUSE),

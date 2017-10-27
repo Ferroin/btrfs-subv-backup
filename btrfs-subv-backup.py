@@ -169,8 +169,17 @@ def gen_rand_subvolpath(path, subvol):
     dest = os.path.split(os.path.join(path, subvol))
     return os.path.join(dest[0], '.' + dest[1] + '.' + seed)
 
-def restore_subvol(path, subvol):
-    '''Restore a subvolume under path.
+def copy_ownership(src, dest):
+    '''Copy the file owner and group from src to dest.'''
+    status = os.stat(src, follow_symlinks=True)
+    os.chown(dest, status.st_uid, status.st_gid)
+
+def convert_dir_to_subv(dest):
+    '''Convert a directory to a subvolume, in-place.
+
+       This takes one argument, the destination path to convert.  It will
+       raise an error if the path is not a directory, and will reduce
+       to doing nothing if the destination is already a subvolume.
 
        This does a functionally in-place restore using a double rename.
        As a result of having to copy eveyrthing already at the given
@@ -180,28 +189,54 @@ def restore_subvol(path, subvol):
 
        Note also that Python has no cross-rename support, so it is
        possible for this function to fail hard.'''
-    temppath = gen_rand_subvolpath(path, subvol)
-    destpath = os.path.join(path, subvol)
-    os.makedirs(os.path.split(temppath)[0], exist_ok=True)
+    path, subvol = os.path.split(dest)
+    if not os.path.isdir(dest):
+        raise OSError('Subvolume destination exists and is not a directory:' + subvol)
+    elif os.stat(dest, follow_symlinks=False).st_ino == 256:
+        return True
+    temppath = os.path.abspath(gen_rand_subvolpath(path, subvol))
+    copypath = os.path.abspath(os.path.join(path, '.btrfs-subv-backup.tmp'))
+    with open(copypath, 'w+') as tmp:
+        tmp.close()
     try:
         subprocess.check_output(['btrfs', 'subvolume', 'create', temppath])
     except subprocess.CalledProcessError:
         raise OSError('Unable to create temporary subvolume:' + subvol)
     try:
-        if os.path.isdir(destpath):
-            shutil.copytree(destpath, temppath, symlinks=True)
-            os.rename(destpath, os.path.join(path, '.btrfs-subv-backup.old'))
-            os.rename(temppath, destpath)
-            shutil.rmtree(os.path.join(path, '.btrfs-subv-backup.old'))
-        elif not os.path.exists(destpath):
-            os.rename(temppath, destpath)
-        else:
-            raise OSError('Subvolume destination exists and is not a directory:' + subvol)
+        oldpath = os.path.abspath(os.path.join(path, '.btrfs-subv-backup.old'))
+        shutil.copystat(dest, copypath, follow_symlinks=True)
+        shutil.copytree(dest, temppath, symlinks=True)
+        os.rename(dest, oldpath)
+        os.rename(temppath, dest)
+        shutil.copystat(copypath, dest, follow_symlinks=True)
+        if os.geteuid() == 0:
+            copy_ownership(oldpath, dest)
+        shutil.rmtree(oldpath)
     finally:
         try:
             subprocess.check_output(['btrfs', 'subvolume', 'delete', temppath])
-        except:
+            os.unlink(copypath)
+        except subprocess.CalledProcessError:
             pass
+    return True
+
+def restore_subvol(path, subvol):
+    '''Restore a subvolume under path.
+
+       If the path exists, it is converted to a subvolume using
+       convert_dir_to_subv(), otherwise we just create the subvolume
+       (and 'ny intermediary directories).'''
+    destpath = os.path.abspath(os.path.join(path, subvol))
+    os.makedirs(os.path.split(destpath)[0], exist_ok=True)
+    if os.path.isdir(destpath):
+        convert_dir_to_subv(destpath)
+    elif not os.path.exists(destpath):
+        try:
+            subprocess.check_output(['btrfs', 'subvolume', 'create', destpath])
+        except subprocess.CalledProcessError:
+            raise OSError("Unable to create subvolume:" + subvol)
+    else:
+        raise OSError('Subvolume destination exists and is not a directory:' + subvol)
 
 def parse_args():
     '''Parse the command-line arguments.'''
