@@ -145,7 +145,7 @@ def get_fs_info(path, verbose=False):
     try:
         ret['uuid'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'UUID', ret['device']]).decode().rstrip()
         ret['label'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'LABEL', ret['device']]).decode().rstrip()
-    except subprocess.CalledProcessError:
+    except subprocess.CalledProcessError, FileNotFoundError:
         pass
     return ret
 
