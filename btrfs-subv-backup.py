@@ -59,7 +59,7 @@ try:
 except ImportError:
     pass
 
-_VERSION = '0.2b'
+_VERSION = '0.3b'
 _DESCRIPTION = '''
 btrfs-subv-backup is a tool for backing up the BTRFS subvolume layout
 below a given mount point.
@@ -142,8 +142,11 @@ def get_fs_info(path, verbose=False):
             ret['subvolume'] = item.partition('=')[2]
     if not ret['subvolid']:
         raise ValueError('Unable to determine mounted subvolume ID for ' + ret['path'])
-    ret['uuid'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'UUID', ret['device']]).decode().rstrip()
-    ret['label'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'LABEL', ret['device']]).decode().rstrip()
+    try:
+        ret['uuid'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'UUID', ret['device']]).decode().rstrip()
+        ret['label'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'LABEL', ret['device']]).decode().rstrip()
+    except subprocess.CalledProcessError:
+        pass
     return ret
 
 def get_subvol_list(fsinfo, verbose=False):
@@ -188,7 +191,7 @@ def copy_ownership(src, dest):
     status = os.stat(src, follow_symlinks=True)
     os.chown(dest, status.st_uid, status.st_gid)
 
-def copytree(src, dest, method):
+def copytree(src, dest, method, verbose=False):
     '''Custom version of shutil.copytree().
 
       This exists so that we can copy ownership properly, and so we can
@@ -211,7 +214,12 @@ def copytree(src, dest, method):
             srcfile = os.path.join(srcpath, root, item)
             destfile = os.path.join(destpath, root, item)
             if method == 'reflinks':
-                reflink.reflink(srcfile, destfile)
+                try:
+                    reflink.reflink(srcfile, destfile)
+                except reflink.ReflinkImpossibleError:
+                    if verbose:
+                        print('ERROR reflinking file, copying instead.')
+                    shutil.copyfile(srcfile, destfile)
             else:
                 shutil.copyfile(srcfile, destfile)
             if os.geteuid() == 0:
@@ -219,7 +227,7 @@ def copytree(src, dest, method):
             shutil.copystat(srcdir, destdir)
     os.chdir(oldcwd)
 
-def convert_dir_to_subv(dest, method):
+def convert_dir_to_subv(dest, method, verbose=False):
     '''Convert a directory to a subvolume, in-place.
 
        This takes one argument, the destination path to convert.  It will
@@ -250,7 +258,7 @@ def convert_dir_to_subv(dest, method):
     try:
         oldpath = os.path.abspath(os.path.join(path, '.btrfs-subv-backup.old'))
         shutil.copystat(dest, copypath, follow_symlinks=True)
-        copytree(dest, temppath, method)
+        copytree(dest, temppath, method, verbose)
         os.rename(dest, oldpath)
         os.rename(temppath, dest)
         shutil.copystat(copypath, dest, follow_symlinks=True)
@@ -273,9 +281,12 @@ def restore_subvol(path, subvol, method, verbose=False):
        (and 'ny intermediary directories).'''
     destpath = os.path.abspath(os.path.join(path, subvol))
     os.makedirs(os.path.split(destpath)[0], exist_ok=True)
+    if _ismount(destpath):
+        raise OSError('Subvolume destination is a mount point, unable to continue:' + destpath)
     if os.path.isdir(destpath):
-        print('Converting directory to subvolume at ' + os.path.join(path, subvol))
-        convert_dir_to_subv(destpath, method)
+        if verbose:
+            print('Converting directory to subvolume at ' + os.path.join(path, subvol))
+        convert_dir_to_subv(destpath, method, verbose)
     elif not os.path.exists(destpath):
         if verbose:
             print('Creating subvolume at ' + os.path.join(path, subvol))
@@ -294,6 +305,8 @@ def parse_args():
                         help='Save the state of the given mount point (this is the default).')
     parser.add_argument('--restore', '-r', action='store_const', dest='mode', const='restore', default='save',
                         help='Restore the state of the given mount point.')
+    parser.add_argument('--convert', '-c', action='store_const', dest='mode', const='convert', default='save',
+                        help='Convert the path to a subvolume in-place.  Does not work on mount-points.')
     parser.add_argument('path', help='The path to the mount point to operate on.')
     parser.add_argument('--verbose', '-v', action='store_const', dest='verbose', const=True, default=False,
                         help='Print out status messages as things happen.')
@@ -325,12 +338,18 @@ def main():
             return json.dump(fsinfo, jfile, sort_keys=True, indent=4)
     elif args.mode == 'restore':
         fsinfo = get_fs_info(args.path, verbose=args.verbose)
-        print('Loading subvolume information')
+        if verbose:
+            print('Loading subvolume information')
         with open(os.path.join(args.path, '.btrfs-subv-backup.json'), 'r') as jfile:
             state = json.load(jfile)
         state['subvolumes'].sort()
         for item in state['subvolumes']:
             restore_subvol(args.path, item, method=args.method, verbose=args.verbose)
+    elif args.mode == 'convert':
+        if verbose:
+            print('Converting ' + path + ' to a subvolume in-place.')
+        path, subvol = os.path.split(args.path)
+        restore_subvol(path, subvol, method=args.method, verbose=args.verbose)
     else:
         raise Exception('Unhandled operating mode: ' + args.mode)
 
