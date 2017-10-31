@@ -20,11 +20,9 @@ It also depends on:
   before version 4.10.  If you have a particularly old kernel, reflinks
   may not be possible, and btrfs-subv-backup will fall back to using a
   direct copy method for converting directories in-place.
-* btrfs-progs: Only the subvolume list, create, and delete commands
-  are used, and the only command that is likely to cause issues is the
-  list command.  I've tested it on versions as far back as 4.10.2,
-  but I expect it should work with earlier versions as well, just like with
-  the kernel.
+* btrfs-progs: Only the subvolume create, and delete commands are used,
+  and those have been pretty much the same forever, so version shouldn't
+  matter.
 * util-linux: Specifically the `blkid` command.  The options that are
   used have been around for longer than BTRFS has, so it's very unlikely
   that you will see any issues with whatever version you have installed.
@@ -83,3 +81,29 @@ extended attributes (such as SELinux context).
 won't recurse into explicitly mounted subvolumes.  This makes usage a
 bit more complicated on some distributions (such as SLES and OpenSUSE),
 but greatly simplifies the code.
+
+### FAQ
+*Q*: Why does it not work with explicitly mounted subvolumes?
+
+*A*: See the answer below, it has to do with how we find subvolumes.
+
+*Q*: How do you get the subvolume info without using the tree search
+ioctl or calling `btrfs subvolume list`?
+
+*A*: There's actually a rather neat trick that you can use to check if
+something is a subvolume as a non-root user.  If a directory is on a BTRFS
+filesystem, `stat` on it shows an inode number of 256 and a device number
+that is different from the next higher directory, and it's not listed in
+`/proc/mounts`, then it's a subvolume.  This of course does not work if
+you explicitly mount subvolumes, but the only distro I know of that does
+that is SUSE, and they do their own thing anyway.
+
+*Q*: How long should it take?
+
+*A*: When saving the subvolume structure, it should be proportionate
+to the total number of directories below the mount point (we check
+all directories).  When restoring to an empty filesystem, it should
+be proportionate to the number of subvolumes to restore, and extremely
+fast.  When restoring to a filesystem that already has data, it will be
+proportionate to the number of subvolumes to restore, and the amount of
+data under those locations in the directory structure.
