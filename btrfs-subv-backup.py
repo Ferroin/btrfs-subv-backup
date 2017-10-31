@@ -310,7 +310,7 @@ def parse_args():
     parser.add_argument('path', help='The path to the mount point to operate on.')
     parser.add_argument('--verbose', '-v', action='store_const', dest='verbose', const=True, default=False,
                         help='Print out status messages as things happen.')
-    parser.add_argument('--method', '-m', nargs='1', dest='method', default='reflink',
+    parser.add_argument('--method', '-m', nargs=1, dest='method', default='reflink',
                         help='Select a particular restore method.  Available options are reflink and copy.')
     args = parser.parse_args()
     if args.mode == 'restore':
