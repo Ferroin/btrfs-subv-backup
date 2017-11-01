@@ -59,7 +59,7 @@ try:
 except ImportError:
     pass
 
-_VERSION = '0.3b'
+_VERSION = '0.4b'
 _DESCRIPTION = '''
 btrfs-subv-backup is a tool for backing up the BTRFS subvolume layout
 below a given mount point.
@@ -145,11 +145,11 @@ def get_fs_info(path, verbose=False):
     try:
         ret['uuid'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'UUID', ret['device']]).decode().rstrip()
         ret['label'] = subprocess.check_output(['blkid', '-o', 'value', '-s', 'LABEL', ret['device']]).decode().rstrip()
-    except subprocess.CalledProcessError, FileNotFoundError:
+    except (subprocess.CalledProcessError, FileNotFoundError):
         pass
     return ret
 
-def get_subvol_list(fsinfo, verbose=False):
+def get_subvol_list(fsinfo, excludes=list(), verbose=False):
     '''Parse the subvolume tree in the mountpoint given by fsinfo.
 
       This returns fsinfo, with the subvolume tree added to it under the
@@ -159,21 +159,32 @@ def get_subvol_list(fsinfo, verbose=False):
 
       This is horribly slow, and could be made much more efficient.'''
     ret = fsinfo
+    exclude_check = shutil.ignore_patterns(*excludes)
     ret['subvolumes'] = list()
     if verbose:
         print('Generating subvolume list for ' + fsinfo['path'])
     for root, dirs, files in os.walk(fsinfo['path']):
         exclude = list()
+        for item in exclude_check(root, dirs):
+            fullpath = os.path.join(root, item)
+            exclude.append(fullpath)
         for item in dirs:
             fullpath = os.path.join(root, item)
-            if _ismount(fullpath):
+            if fullpath in exclude:
+                if verbose:
+                    print(os.path.join(root[len(fsinfo['path']):].lstrip('/'), item) + ' excluded')
+                continue
+            elif _ismount(fullpath):
+                if verbose:
+                    print('Found mountpoint at ' + os.path.join(root[len(fsinfo['path']):].lstrip('/'), item))
                 exclude.append(item)
                 continue
             elif os.stat(fullpath, follow_symlinks=False).st_ino == 256:
                 if verbose:
                     print('Found subvolume at ' + os.path.join(root[len(fsinfo['path']):].lstrip('/'), item))
                 ret['subvolumes'].append(os.path.join(root[len(fsinfo['path']):].lstrip('/'), item))
-        dirs[:] = [d for d in dirs if d not in exclude]
+        for item in exclude:
+            dirs.remove(os.path.split(item)[1])
     ret['subvolumes'].sort()
     return ret
 
@@ -312,6 +323,8 @@ def parse_args():
                         help='Print out status messages as things happen.')
     parser.add_argument('--method', '-m', nargs=1, dest='method', default='reflink',
                         help='Select a particular restore method.  Available options are reflink and copy.')
+    parser.add_argument('--exclude', '-e', action='append', dest='exclude', default=list(),
+                        help='A file pattern to exclude when saving the subvolume structure.')
     args = parser.parse_args()
     if args.mode == 'restore':
         if args.method == 'reflink':
@@ -331,14 +344,14 @@ def main():
     args = parse_args()
     if args.mode == 'save':
         fsinfo = get_fs_info(args.path, verbose=args.verbose)
-        fsinfo = get_subvol_list(fsinfo, verbose=args.verbose)
+        fsinfo = get_subvol_list(fsinfo, excludes=args.exclude, verbose=args.verbose)
         if args.verbose:
             print('Writing subvolume information')
         with open(os.path.join(args.path, '.btrfs-subv-backup.json'), 'w+') as jfile:
             return json.dump(fsinfo, jfile, sort_keys=True, indent=4)
     elif args.mode == 'restore':
         fsinfo = get_fs_info(args.path, verbose=args.verbose)
-        if verbose:
+        if args.verbose:
             print('Loading subvolume information')
         with open(os.path.join(args.path, '.btrfs-subv-backup.json'), 'r') as jfile:
             state = json.load(jfile)
@@ -346,8 +359,8 @@ def main():
         for item in state['subvolumes']:
             restore_subvol(args.path, item, method=args.method, verbose=args.verbose)
     elif args.mode == 'convert':
-        if verbose:
-            print('Converting ' + path + ' to a subvolume in-place.')
+        if args.verbose:
+            print('Converting ' + args.path + ' to a subvolume in-place.')
         path, subvol = os.path.split(args.path)
         restore_subvol(path, subvol, method=args.method, verbose=args.verbose)
     else:

@@ -1,4 +1,4 @@
-# btrfs-subv-backup v0.3b
+# btrfs-subv-backup v0.4b
 btrfs-subv-backup is a tool for recording the layout of subvolumes on
 a mounted BTRFS filesystem in a way that can be stored in a regular
 file-based backup (for example, using tar).  It originated out of
@@ -46,6 +46,11 @@ point, run:
 This will create a file called `.btrfs-subv-backup.json` in the root of
 the mount point, make sure that gets included in any backups you run of
 the mount point.
+
+You can exclude arbitrary paths from the subvolume search by using the
+`--exclude` option.  It takes a shell-style pattern to match for
+exclusion.  This option can be specified multiple times to exclude based
+on multiple patterns.
 
 To restore the subvolumes in a filesystem after you've extracted a backup
 of the mount point, run:
